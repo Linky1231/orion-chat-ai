@@ -40,18 +40,30 @@ async function streamChat(
     });
 
     if (!res.ok) {
-      onError("Error " + res.status + ": " + res.statusText);
+      // Try to read the error body
+      let detail = "";
+      try {
+        const errBody = await res.text();
+        const parsed = JSON.parse(errBody);
+        detail = parsed.error?.message || parsed.message || errBody;
+      } catch {
+        // fallback
+      }
+      onError(
+        "Error " + res.status + (detail ? ": " + detail : ""),
+      );
       return;
     }
 
     const reader = res.body?.getReader();
     if (!reader) {
-      onError("No se pudo leer la respuesta.");
+      onError("No se pudo leer la respuesta del servidor.");
       return;
     }
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let gotContent = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -71,21 +83,35 @@ async function streamChat(
         }
         try {
           const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta?.content;
-          if (delta) onChunk(delta);
+          const delta = parsed.choices?.[0]?.delta;
+          // Handle both content and reasoning content
+          const chunk = delta?.content || delta?.reasoning || "";
+          if (chunk) {
+            onChunk(chunk);
+            gotContent = true;
+          }
         } catch {
           // skip malformed chunks
         }
       }
     }
-    onDone();
+
+    if (gotContent) {
+      onDone();
+    } else {
+      onError("La respuesta llegó vacía. Intenta de nuevo.");
+    }
   } catch (e) {
-    onError(e instanceof Error ? e.message : "Error de conexión");
+    // Network or CORS error
+    onError(
+      e instanceof Error
+        ? "Error de red: " + e.message
+        : "Error de conexión desconocido",
+    );
   }
 }
 
 function inlineFormat(text: string): React.ReactNode[] {
-  // Split on **bold** and backtick code — use a safe regex with no backticks in pattern
   const regex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
   const parts = text.split(regex);
   return parts.map((part, i) => {
