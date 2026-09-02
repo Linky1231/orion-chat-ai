@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Send, Sparkles, RotateCcw, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router";
+import { useAction } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
 interface Message {
   id: string;
@@ -10,105 +12,8 @@ interface Message {
   content: string;
 }
 
-const ORION_SYSTEM =
-  "Eres Orión, un asistente de IA inteligente, amigable y servicial. Respondes en español por defecto pero puedes usar cualquier idioma si el usuario lo pide. Eres conciso pero completo, y tienes personalidad. Tu nombre es Orión.";
-
 function generateId() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-async function streamChat(
-  messages: Message[],
-  onChunk: (text: string) => void,
-  onDone: () => void,
-  onError: (err: string) => void,
-) {
-  try {
-    const apiMessages = [
-      { role: "system", content: ORION_SYSTEM },
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
-    ];
-
-    const res = await fetch("https://text.pollinations.ai/openai/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "openai",
-        messages: apiMessages,
-        stream: true,
-      }),
-    });
-
-    if (!res.ok) {
-      // Try to read the error body
-      let detail = "";
-      try {
-        const errBody = await res.text();
-        const parsed = JSON.parse(errBody);
-        detail = parsed.error?.message || parsed.message || errBody;
-      } catch {
-        // fallback
-      }
-      onError(
-        "Error " + res.status + (detail ? ": " + detail : ""),
-      );
-      return;
-    }
-
-    const reader = res.body?.getReader();
-    if (!reader) {
-      onError("No se pudo leer la respuesta del servidor.");
-      return;
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let gotContent = false;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data: ")) continue;
-        const data = trimmed.slice(6);
-        if (data === "[DONE]") {
-          onDone();
-          return;
-        }
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta;
-          // Handle both content and reasoning content
-          const chunk = delta?.content || delta?.reasoning || "";
-          if (chunk) {
-            onChunk(chunk);
-            gotContent = true;
-          }
-        } catch {
-          // skip malformed chunks
-        }
-      }
-    }
-
-    if (gotContent) {
-      onDone();
-    } else {
-      onError("La respuesta llegó vacía. Intenta de nuevo.");
-    }
-  } catch (e) {
-    // Network or CORS error
-    onError(
-      e instanceof Error
-        ? "Error de red: " + e.message
-        : "Error de conexión desconocido",
-    );
-  }
 }
 
 function inlineFormat(text: string): React.ReactNode[] {
@@ -122,7 +27,11 @@ function inlineFormat(text: string): React.ReactNode[] {
         </strong>
       );
     }
-    if (part.length > 1 && part.charAt(0) === "`" && part.charAt(part.length - 1) === "`") {
+    if (
+      part.length > 1 &&
+      part.charAt(0) === "`" &&
+      part.charAt(part.length - 1) === "`"
+    ) {
       return (
         <code
           key={i}
@@ -163,6 +72,43 @@ function renderContent(text: string) {
   });
 }
 
+/** Call Pollinations directly from the browser as a fallback */
+async function callPollinationsDirect(
+  messages: Array<{ role: string; content: string }>,
+): Promise<string> {
+  const ORION_SYSTEM =
+    "Eres Orión, un asistente de IA inteligente, amigable y servicial. Respondes en español por defecto pero puedes usar cualquier idioma si el usuario lo pide. Eres conciso pero completo, y tienes personalidad. Tu nombre es Orión.";
+
+  const apiMessages = [
+    { role: "system", content: ORION_SYSTEM },
+    ...messages,
+  ];
+
+  const res = await fetch(
+    "https://text.pollinations.ai/openai/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-No-Cache": "true",
+      },
+      body: JSON.stringify({
+        model: "openai",
+        messages: apiMessages,
+        stream: false,
+      }),
+    },
+  );
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Pollinations API error: ${res.status} - ${errText}`);
+  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
 export default function Chat() {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -170,6 +116,7 @@ export default function Chat() {
   const [isStreaming, setIsStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const chatAction = useAction(api.chat.chat);
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -195,7 +142,11 @@ export default function Chat() {
       const trimmed = input.trim();
       if (!trimmed || isStreaming) return;
 
-      const userMsg: Message = { id: generateId(), role: "user", content: trimmed };
+      const userMsg: Message = {
+        id: generateId(),
+        role: "user",
+        content: trimmed,
+      };
       const assistantMsg: Message = {
         id: generateId(),
         role: "assistant",
@@ -206,33 +157,61 @@ export default function Chat() {
       setInput("");
       setIsStreaming(true);
 
-      const allMessages = [...messages, userMsg];
+      try {
+        const allMessages = [...messages, userMsg].map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
 
-      await streamChat(
-        allMessages,
-        (chunk) => {
+        let content = "";
+
+        // Try Convex action first (server-side proxy)
+        try {
+          const result = await chatAction({ messages: allMessages });
+          content = result?.content || "";
+        } catch {
+          // Convex action failed, try direct browser call
+          content = await callPollinationsDirect(allMessages);
+        }
+
+        if (content) {
+          // Progressive reveal for streaming feel
+          const chars = [...content];
+          const chunkSize = 3;
+          for (let i = 0; i < chars.length; i += chunkSize) {
+            const chunk = chars.slice(i, i + chunkSize).join("");
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsg.id
+                  ? { ...m, content: m.content + chunk }
+                  : m,
+              ),
+            );
+            await new Promise((r) => setTimeout(r, 12));
+          }
+        } else {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantMsg.id
-                ? { ...m, content: m.content + chunk }
+                ? { ...m, content: "Respuesta vacía del servidor." }
                 : m,
             ),
           );
-        },
-        () => setIsStreaming(false),
-        (err) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantMsg.id
-                ? { ...m, content: m.content || "⚠️ " + err }
-                : m,
-            ),
-          );
-          setIsStreaming(false);
-        },
-      );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Error desconocido";
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsg.id
+              ? { ...m, content: "⚠️ " + msg }
+              : m,
+          ),
+        );
+      } finally {
+        setIsStreaming(false);
+      }
     },
-    [input, isStreaming, messages],
+    [input, isStreaming, messages, chatAction],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
