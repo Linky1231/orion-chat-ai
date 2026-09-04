@@ -72,43 +72,6 @@ function renderContent(text: string) {
   });
 }
 
-/** Call Pollinations directly from the browser as a fallback */
-async function callPollinationsDirect(
-  messages: Array<{ role: string; content: string }>,
-): Promise<string> {
-  const ORION_SYSTEM =
-    "Eres Orión, un asistente de IA inteligente, amigable y servicial. Respondes en español por defecto pero puedes usar cualquier idioma si el usuario lo pide. Eres conciso pero completo, y tienes personalidad. Tu nombre es Orión.";
-
-  const apiMessages = [
-    { role: "system", content: ORION_SYSTEM },
-    ...messages,
-  ];
-
-  const res = await fetch(
-    "https://text.pollinations.ai/openai/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-No-Cache": "true",
-      },
-      body: JSON.stringify({
-        model: "openai",
-        messages: apiMessages,
-        stream: false,
-      }),
-    },
-  );
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Pollinations API error: ${res.status} - ${errText}`);
-  }
-
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content || "";
-}
-
 export default function Chat() {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -163,16 +126,8 @@ export default function Chat() {
           content: m.content,
         }));
 
-        let content = "";
-
-        // Try Convex action first (server-side proxy)
-        try {
-          const result = await chatAction({ messages: allMessages });
-          content = result?.content || "";
-        } catch {
-          // Convex action failed, try direct browser call
-          content = await callPollinationsDirect(allMessages);
-        }
+        const result = await chatAction({ messages: allMessages });
+        const content = result?.content || "";
 
         if (content) {
           // Progressive reveal for streaming feel
@@ -352,7 +307,7 @@ export default function Chat() {
           </Button>
         </form>
         <p className="mx-auto mt-2 max-w-2xl text-center text-[10px] text-muted-foreground/50">
-          Powered by Pollinations AI · Sin límites · Sin registro
+          Motor: NVIDIA NIM · Con tu propia clave · Sin registro
         </p>
       </div>
     </div>
