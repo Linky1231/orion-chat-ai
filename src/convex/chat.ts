@@ -8,7 +8,7 @@ const PREXZY_BASE_URL =
 
 /**
  * Server action that calls the user-provided chat endpoint and returns the
- * full response text exactly as the API returns it.
+ * full JSON response exactly as a string.
  *
  * Runs on the Convex Node.js server so any API key stays out of the browser.
  */
@@ -45,7 +45,7 @@ export const chat = action({
 
     try {
       const json = JSON.parse(raw);
-      content = JSON.stringify(json, null, 2);
+      content = JSON.stringify(json);
     } catch {
       content = raw;
     }
