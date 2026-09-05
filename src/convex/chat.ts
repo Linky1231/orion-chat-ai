@@ -7,8 +7,8 @@ const PREXZY_BASE_URL =
   "https://prexzyapis.com/ai/aiwriter-chat";
 
 /**
- * Server action that calls the user-provided chat endpoint and returns the
- * full JSON response exactly as a string.
+ * Server action that calls the user-provided chat endpoint and returns just the
+ * text answer from the response JSON.
  *
  * Runs on the Convex Node.js server so any API key stays out of the browser.
  */
@@ -44,8 +44,25 @@ export const chat = action({
     let content: string;
 
     try {
-      const json = JSON.parse(raw);
-      content = JSON.stringify(json);
+      const json = JSON.parse(raw) as {
+        result?: { text?: string[] };
+        text?: string[];
+        answer?: string[];
+        response?: string[];
+      };
+
+      const textArray =
+        json.result?.text ??
+        json.text ??
+        json.answer ??
+        json.response ??
+        [];
+
+      if (Array.isArray(textArray) && textArray.length > 0) {
+        content = textArray[0];
+      } else {
+        content = raw;
+      }
     } catch {
       content = raw;
     }
