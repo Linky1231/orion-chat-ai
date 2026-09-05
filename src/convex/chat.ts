@@ -10,13 +10,23 @@ const PREXZY_BASE_URL =
   "https://prexzyapis.com/ai/aiwriter-chat";
 
 /**
- * Server action that calls the user-provided chat endpoint and returns the
- * response text. Runs on the Convex Node.js server so any API key stays out of
- * the browser.
+ * Server action that calls the user-provided chat endpoint and returns only the
+ * reply text. Runs on the Convex Node.js server so any API key stays out of the
+ * browser.
  *
- * The endpoint is called as a plain GET with the latest user message in the
- * `prompt` query param and `model=model`. If the server returns JSON instead of
- * plain text, the action tries to extract a text field automatically.
+ * Expected response shape:
+ * {
+ *   "status": true,
+ *   "result": {
+ *     "status": true,
+ *     "text": [ "respuesta" ],
+ *     "is_full_answer": true,
+ *     "model": "model"
+ *   }
+ * }
+ *
+ * We extract `result.text[0]` when available. If the endpoint returns plain
+ * text instead, we fall back to the whole body.
  */
 export const chat = action({
   args: {
@@ -37,7 +47,7 @@ export const chat = action({
       `${PREXZY_BASE_URL}?prompt=${encodeURIComponent(lastUserMessage)}&model=model`,
       {
         method: "GET",
-        headers: { Accept: "text/plain" },
+        headers: { Accept: "application/json" },
       },
     );
 
@@ -47,21 +57,29 @@ export const chat = action({
     }
 
     const raw = await res.text();
-
-    // If the endpoint returns JSON instead of plain text, parse it and extract
-    // the first useful text field we recognize.
     let content: string;
+
     try {
       const json = JSON.parse(raw);
-      content =
-        json.content ??
-        json.text ??
-        json.answer ??
-        json.response ??
-        json.message ??
-        json.data ??
-        json.output ??
-        raw;
+
+      // Try the exact response shape you showed me first, then a few common
+      // text-field names as fallbacks. We use a loose type so a non-matching
+      // JSON response does not crash the typecheck.
+      const textArray =
+        (json as { result?: { text?: unknown } } | undefined)?.result?.text ??
+        (json as { text?: unknown } | undefined)?.text ??
+        (json as { answer?: unknown } | undefined)?.answer ??
+        (json as { response?: unknown } | undefined)?.response ?? [];
+
+      if (Array.isArray(textArray) && textArray.length > 0) {
+        content = textArray
+          .filter((t) => typeof t === "string")
+          .join("\n\n");
+      } else if (typeof textArray === "string") {
+        content = textArray;
+      } else {
+        content = raw;
+      }
     } catch {
       content = raw;
     }
