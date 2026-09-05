@@ -33,7 +33,7 @@ export const chat = action({
       );
     }
 
-    const model = process.env.ORION_NVIDIA_MODEL ?? "meta/llama-3.3-70b-instruct";
+    const model = process.env.ORION_NVIDIA_MODEL ?? "meta/llama-4-maverick-17b-128e-instruct";
 
     const apiMessages = [
       { role: "system", content: ORION_SYSTEM },
