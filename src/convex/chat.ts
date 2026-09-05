@@ -3,30 +3,14 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 
-const ORION_SYSTEM =
-  "Eres Orión, un asistente de IA inteligente, amigable y servicial. Respondes en español por defecto pero puedes usar cualquier idioma si el usuario lo pide. Eres conciso pero completo, y tienes personalidad. Tu nombre es Orión.";
-
 const PREXZY_BASE_URL =
   "https://prexzyapis.com/ai/aiwriter-chat";
 
 /**
- * Server action that calls the user-provided chat endpoint and returns only the
- * reply text. Runs on the Convex Node.js server so any API key stays out of the
- * browser.
+ * Server action that calls the user-provided chat endpoint and returns the
+ * full response text exactly as the API returns it.
  *
- * Expected response shape:
- * {
- *   "status": true,
- *   "result": {
- *     "status": true,
- *     "text": [ "respuesta" ],
- *     "is_full_answer": true,
- *     "model": "model"
- *   }
- * }
- *
- * We extract `result.text[0]` when available. If the endpoint returns plain
- * text instead, we fall back to the whole body.
+ * Runs on the Convex Node.js server so any API key stays out of the browser.
  */
 export const chat = action({
   args: {
@@ -61,25 +45,7 @@ export const chat = action({
 
     try {
       const json = JSON.parse(raw);
-
-      // Try the exact response shape you showed me first, then a few common
-      // text-field names as fallbacks. We use a loose type so a non-matching
-      // JSON response does not crash the typecheck.
-      const textArray =
-        (json as { result?: { text?: unknown } } | undefined)?.result?.text ??
-        (json as { text?: unknown } | undefined)?.text ??
-        (json as { answer?: unknown } | undefined)?.answer ??
-        (json as { response?: unknown } | undefined)?.response ?? [];
-
-      if (Array.isArray(textArray) && textArray.length > 0) {
-        content = textArray
-          .filter((t) => typeof t === "string")
-          .join("\n\n");
-      } else if (typeof textArray === "string") {
-        content = textArray;
-      } else {
-        content = raw;
-      }
+      content = JSON.stringify(json, null, 2);
     } catch {
       content = raw;
     }
