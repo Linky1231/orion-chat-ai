@@ -1,10 +1,14 @@
-import { useState, useRef, useEffect, useCallback, type FormEvent } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  type FormEvent,
+} from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Sparkles, RotateCcw, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router";
-import { useAction } from "convex/react";
-import { api } from "@/convex/_generated/api";
 
 interface Message {
   id: string;
@@ -72,6 +76,15 @@ function renderContent(text: string) {
   });
 }
 
+const ORION_API_URL =
+  "https://prexzyapis.com/ai/aiwriter-chat?prompt=%s&model=model";
+
+function buildUrl(promptText: string) {
+  return `https://prexzyapis.com/ai/aiwriter-chat?prompt=${encodeURIComponent(
+    promptText,
+  )}&model=model`;
+}
+
 export default function Chat() {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -79,7 +92,6 @@ export default function Chat() {
   const [isStreaming, setIsStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const chatAction = useAction(api.chat.chat);
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -120,31 +132,67 @@ export default function Chat() {
       setInput("");
       setIsStreaming(true);
 
+      let fullContent = "";
+      const decoder = new TextDecoder("utf-8");
+
       try {
-        const allMessages = [...messages, userMsg].map((m) => ({
-          role: m.role,
-          content: m.content,
-        }));
+        const res = await fetch(buildUrl(trimmed), {
+          method: "GET",
+          headers: { Accept: "text/plain" },
+        });
 
-        const result = await chatAction({ messages: allMessages });
-        const content = result?.content || "";
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(
+            `API de Orión error: ${res.status} - ${errText}`,
+          );
+        }
 
-        if (content) {
-          // Progressive reveal for streaming feel
-          const chars = [...content];
-          const chunkSize = 3;
-          for (let i = 0; i < chars.length; i += chunkSize) {
-            const chunk = chars.slice(i, i + chunkSize).join("");
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsg.id
-                  ? { ...m, content: m.content + chunk }
-                  : m,
-              ),
-            );
-            await new Promise((r) => setTimeout(r, 12));
+        if (!res.body) {
+          throw new Error("El servidor no soporta streaming");
+        }
+
+        const reader = res.body.getReader();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          if (value) {
+            buffer += decoder.decode(value, { stream: true });
+
+            // Flush on paragraph breaks so the UI stays responsive without
+            // waiting for the whole response.
+            const flushAt = buffer.lastIndexOf("\n\n");
+            if (flushAt !== -1) {
+              const chunk = buffer.slice(0, flushAt + 2);
+              fullContent += chunk;
+              buffer = buffer.slice(flushAt + 2);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMsg.id
+                    ? { ...m, content: fullContent }
+                    : m,
+                ),
+              );
+            }
           }
-        } else {
+        }
+
+        // Flush whatever is left.
+        if (buffer) {
+          fullContent += buffer;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsg.id
+                ? { ...m, content: fullContent }
+                : m,
+            ),
+          );
+        }
+
+        if (!fullContent.trim()) {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantMsg.id
@@ -154,7 +202,8 @@ export default function Chat() {
           );
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Error desconocido";
+        const msg =
+          err instanceof Error ? err.message : "Error desconocido";
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantMsg.id
@@ -166,7 +215,7 @@ export default function Chat() {
         setIsStreaming(false);
       }
     },
-    [input, isStreaming, messages, chatAction],
+    [input, isStreaming],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -307,7 +356,7 @@ export default function Chat() {
           </Button>
         </form>
         <p className="mx-auto mt-2 max-w-2xl text-center text-[10px] text-muted-foreground/50">
-          Motor: NVIDIA NIM · Con tu propia clave · Sin registro
+          Motor: tu API de Orión · Sin registro
         </p>
       </div>
     </div>
